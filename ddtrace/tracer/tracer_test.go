@@ -948,7 +948,7 @@ func TestTracerNoDebugStack(t *testing.T) {
 
 // newDefaultTransport return a default transport for this tracing client
 func newDefaultTransport() transport {
-	return newHTTPTransport(defaultAddress, defaultClient)
+	return newHTTPTransport(defaultURL, defaultClient)
 }
 
 func TestNewSpan(t *testing.T) {
@@ -1034,10 +1034,10 @@ func TestTracerPrioritySampler(t *testing.T) {
 			}
 		}`))
 	}))
-	addr := srv.Listener.Addr().String()
+	url := "http://" + srv.Listener.Addr().String()
 
 	tr, _, flush, stop := startTestTracer(t,
-		withTransport(newHTTPTransport(addr, defaultClient)),
+		withTransport(newHTTPTransport(url, defaultClient)),
 	)
 	defer stop()
 
@@ -1699,26 +1699,32 @@ func TestEnvironment(t *testing.T) {
 // BenchmarkConcurrentTracing tests the performance of spawning a lot of
 // goroutines where each one creates a trace with a parent and a child.
 func BenchmarkConcurrentTracing(b *testing.B) {
-	tracer, _, _, stop := startTestTracer(b, WithSampler(NewRateSampler(0)))
+	tracer, _, _, stop := startTestTracer(b, WithLogger(log.DiscardLogger{}), WithSampler(NewRateSampler(0)))
 	defer stop()
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		go func() {
-			parent := tracer.StartSpan("pylons.request", ServiceName("pylons"), ResourceName("/"))
-			defer parent.Finish()
+		wg := sync.WaitGroup{}
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				parent := tracer.StartSpan("pylons.request", ServiceName("pylons"), ResourceName("/"))
+				defer parent.Finish()
 
-			for i := 0; i < 10; i++ {
-				tracer.StartSpan("redis.command", ChildOf(parent.Context())).Finish()
-			}
-		}()
+				for i := 0; i < 10; i++ {
+					tracer.StartSpan("redis.command", ChildOf(parent.Context())).Finish()
+				}
+			}()
+		}
+		wg.Wait()
 	}
 }
 
 // BenchmarkTracerAddSpans tests the performance of creating and finishing a root
 // span. It should include the encoding overhead.
 func BenchmarkTracerAddSpans(b *testing.B) {
-	tracer, _, _, stop := startTestTracer(b, WithSampler(NewRateSampler(0)))
+	tracer, _, _, stop := startTestTracer(b, WithLogger(log.DiscardLogger{}), WithSampler(NewRateSampler(0)))
 	defer stop()
 
 	for n := 0; n < b.N; n++ {
@@ -1728,8 +1734,9 @@ func BenchmarkTracerAddSpans(b *testing.B) {
 }
 
 func BenchmarkStartSpan(b *testing.B) {
-	tracer, _, _, stop := startTestTracer(b, WithSampler(NewRateSampler(0)))
+	tracer, _, _, stop := startTestTracer(b, WithLogger(log.DiscardLogger{}), WithSampler(NewRateSampler(0)))
 	defer stop()
+
 	root := tracer.StartSpan("pylons.request", ServiceName("pylons"), ResourceName("/"))
 	ctx := ContextWithSpan(context.TODO(), root)
 
